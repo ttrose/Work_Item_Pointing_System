@@ -71,6 +71,20 @@ Then open:
 http://localhost:5173
 ```
 
+### 4. Stop the app on Ubuntu
+
+If you started backend and frontend in separate terminals, stop each one with:
+
+```bash
+Ctrl + C
+```
+
+Notes:
+
+- Press `Ctrl + C` once in the frontend terminal running `npm run dev`.
+- Press `Ctrl + C` once in the backend terminal running `python3 app.py`.
+- If one process does not exit, press `Ctrl + C` again.
+
 ## Ubuntu one-command helper scripts
 
 From the project root:
@@ -150,4 +164,10 @@ python3 app.py
 ```bash
 docker compose up --build
 docker compose down
+```
+
+To stop Docker services without removing containers:
+
+```bash
+docker compose stop
 ```
