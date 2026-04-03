@@ -6,6 +6,7 @@ This version uses a real frontend/backend split:
 - **Backend:** Flask + Flask-SocketIO
 - **Realtime:** Socket.IO
 - **Docker:** frontend + backend containers
+- **Ubuntu support:** included below
 
 ## Project structure
 
@@ -13,143 +14,110 @@ This version uses a real frontend/backend split:
 planning_poker_full_vue/
   backend/
   frontend/
+  scripts/
   docker-compose.yml
   README.md
 ```
 
----
+## Ubuntu quick start
 
-## 1. Requirements
+These steps assume **Ubuntu 22.04+**.
 
-Install these first:
+### 1. Install system packages
 
-### Node / npm
-Use **Node 20+**.
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip curl ca-certificates gnupg
+```
 
-Check:
+### 2. Install Node.js 20
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Verify:
+
 ```bash
 node -v
 npm -v
+python3 --version
 ```
 
-### Python
-Use **Python 3.11+**.
+### 3. Start the app on Ubuntu
 
-Check:
+Open one terminal for the backend:
+
 ```bash
-python --version
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 app.py
 ```
 
----
+Open a second terminal for the frontend:
 
-## 2. Frontend setup
-
-Open a terminal in `frontend/`.
-
-Install dependencies:
 ```bash
 cd frontend
 npm install
-```
-
-### Packages used
-These are already listed in `package.json`, so `npm install` is enough.
-
-If you want the manual equivalent, these are the important ones:
-```bash
-npm install vue socket.io-client
-npm install -D vite @vitejs/plugin-vue
-```
-
----
-
-## 3. Backend setup
-
-Open another terminal in `backend/`.
-
-Create a virtual environment:
-
-### Windows PowerShell
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-### Windows CMD
-```cmd
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### macOS / Linux
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Python packages used
-Already included in `requirements.txt`:
-```bash
-pip install Flask Flask-SocketIO Flask-Cors simple-websocket
-```
-
----
-
-## 4. Run locally for development
-
-You need **two terminals**.
-
-### Terminal 1: backend
-```bash
-cd backend
-python app.py
-```
-
-Backend runs on:
-```text
-http://localhost:5000
-```
-
-### Terminal 2: frontend
-```bash
-cd frontend
 npm run dev
 ```
 
-Frontend runs on:
+Then open:
+
 ```text
 http://localhost:5173
 ```
 
-Open the frontend URL in your browser.
+### 4. Stop the app on Ubuntu
 
----
-
-## 5. Production-style local build
-
-Build the Vue frontend:
+If you started backend and frontend in separate terminals, stop each one with:
 
 ```bash
-cd frontend
-npm run build
+Ctrl + C
 ```
 
-Preview it:
-```bash
-npm run preview
-```
+Notes:
 
----
+- Press `Ctrl + C` once in the frontend terminal running `npm run dev`.
+- Press `Ctrl + C` once in the backend terminal running `python3 app.py`.
+- If one process does not exit, press `Ctrl + C` again.
 
-## 6. Docker setup
+## Ubuntu one-command helper scripts
 
 From the project root:
+
+### Install dependencies and set up the backend venv
+```bash
+bash scripts/setup_ubuntu.sh
+```
+
+### Run backend
+```bash
+bash scripts/run_backend.sh
+```
+
+### Run frontend
+```bash
+bash scripts/run_frontend.sh
+```
+
+## Docker on Ubuntu
+
+Install Docker and Compose plugin if needed:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+```
+
+Log out and back in after adding yourself to the docker group.
+
+Then from the project root:
 
 ```bash
 docker compose up --build
@@ -165,41 +133,18 @@ Backend:
 http://localhost:5000
 ```
 
----
+## Notes for Ubuntu
 
-## 7. Current behavior
+- Use `python3`, not `python`, to avoid path issues.
+- The frontend Vite server is already configured with `--host 0.0.0.0`, so it works in Ubuntu, Docker, and most VM/WSL setups.
+- The backend Flask app already binds to `0.0.0.0`, so it is reachable from the frontend and from Docker.
+- This project still stores room/session state in memory only. Restarting the backend clears active rooms.
 
-- one shared session
-- users can join as:
-  - **Player**
-  - **Observer**
-- players choose:
-  - **DEV**
-  - **QA**
-- observers do **not** need a team
-- permission-aware reveal/reset buttons
-- settings tabs
-- DEV / QA split results
-- moderator handoff
-- history
-- consensus badges
-- summary stats
-
----
-
-## 8. Notes
-
-- Settings are still in-memory only
-- No database yet
-- First observer becomes moderator
-- Changing settings clears the current round
-
----
-
-## 9. Helpful commands
+## Helpful commands
 
 ### Frontend
 ```bash
+cd frontend
 npm install
 npm run dev
 npm run build
@@ -208,12 +153,21 @@ npm run preview
 
 ### Backend
 ```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-python app.py
+python3 app.py
 ```
 
 ### Docker
 ```bash
 docker compose up --build
 docker compose down
+```
+
+To stop Docker services without removing containers:
+
+```bash
+docker compose stop
 ```

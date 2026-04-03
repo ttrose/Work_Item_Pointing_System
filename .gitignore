@@ -1,0 +1,16 @@
+# Python backend environment and caches
+backend/.venv/
+**/__pycache__/
+*.pyc
+
+# Frontend dependencies and build artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
