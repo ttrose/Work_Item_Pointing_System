@@ -1,5 +1,11 @@
 <template>
   <div class="shell">
+    <div class="shell-actions">
+      <button class="btn ghost theme-toggle" @click="toggleTheme">
+        {{ isDarkMode ? 'Light Mode' : 'Dark Mode' }}
+      </button>
+    </div>
+
     <div v-if="!roomId" class="panel hero">
       <h1>Fusion Planning Poker</h1>
       <p class="muted">
@@ -359,6 +365,21 @@
         </main>
       </div>
     </div>
+
+    <footer class="donate-footer panel">
+      <div>
+        <strong>Enjoying Work Item Pointing?</strong>
+        <div class="muted">Support the open source project if it helps your team.</div>
+      </div>
+      <a
+        class="btn primary donate-link"
+        href="https://cash.app/$ravewharf"
+        target="_blank"
+        rel="noreferrer"
+      >
+        Donate via Cash App
+      </a>
+    </footer>
   </div>
 </template>
 
@@ -368,6 +389,7 @@ import { io } from 'socket.io-client'
 import { API_BASE, SOCKET_URL } from './config'
 
 const SESSION_STORAGE_ROOM_KEY = 'fusion_poker_joined_room'
+const THEME_STORAGE_KEY = 'fusion_poker_theme'
 
 function parseRoomRoute(location) {
   const params = new URLSearchParams(location.search)
@@ -393,6 +415,7 @@ const selectedVote = ref(null)
 const socket = ref(null)
 const dragPointIndex = ref(null)
 const errorMessage = ref('')
+const isDarkMode = ref(localStorage.getItem(THEME_STORAGE_KEY) === 'dark')
 
 const identity = reactive({
   user_id: localStorage.getItem('fusion_poker_user_id') || crypto.randomUUID(),
@@ -457,6 +480,16 @@ const moderatorName = computed(() => {
   const found = state.participants.find(p => p.user_id === state.moderator_user_id)
   return found ? found.name : ''
 })
+
+function applyTheme() {
+  document.body.classList.toggle('theme-dark', isDarkMode.value)
+  localStorage.setItem(THEME_STORAGE_KEY, isDarkMode.value ? 'dark' : 'light')
+}
+
+function toggleTheme() {
+  isDarkMode.value = !isDarkMode.value
+  applyTheme()
+}
 
 function markRoomJoined() {
   joinedRoomId.value = roomId.value
@@ -731,6 +764,7 @@ async function copyRoom() {
 }
 
 onMounted(() => {
+  applyTheme()
   normalizeIdentity()
 
   if (roomId.value && !showJoinScreen.value) {
