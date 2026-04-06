@@ -6,10 +6,16 @@
         Single-session planning poker with DEV and QA split estimation, moderator controls,
         live settings, and permission-aware actions.
       </p>
+      <div v-if="errorMessage" class="alert error">{{ errorMessage }}</div>
 
       <div class="field">
         <label>Session name</label>
         <input v-model="createSessionName" placeholder="Fusion Refinement" />
+      </div>
+
+      <div class="field">
+        <label>Your name</label>
+        <input v-model="identity.name" placeholder="Moderator name" />
       </div>
 
       <div class="button-row">
@@ -17,23 +23,72 @@
       </div>
     </div>
 
+    <div v-else-if="showJoinScreen" class="panel hero">
+      <h1>Join Session</h1>
+      <p class="muted">
+        Confirm who is joining room <strong>{{ roomId }}</strong> before entering the session.
+      </p>
+      <div v-if="errorMessage" class="alert error">{{ errorMessage }}</div>
+
+      <div class="field">
+        <label>Name</label>
+        <input v-model="identity.name" placeholder="Your name" />
+      </div>
+
+      <div class="identity join-grid">
+        <div class="field">
+          <label>Participation</label>
+          <select v-model="identity.participant_type" @change="normalizeIdentity">
+            <option value="player">Player</option>
+            <option value="observer">Observer</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Team</label>
+          <select
+            v-model="identity.team"
+            @change="normalizeIdentity"
+            :disabled="identity.participant_type === 'observer'"
+          >
+            <option value="">No team</option>
+            <option value="DEV">DEV</option>
+            <option value="QA">QA</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="button-row">
+        <button class="btn primary" @click="joinRoom">Join Session</button>
+      </div>
+    </div>
+
     <div v-else>
       <div class="panel topbar">
+        <div v-if="errorMessage" class="alert error topbar-alert">{{ errorMessage }}</div>
         <div class="field">
           <label>Session</label>
-          <input v-model="localStory.session_name" @change="saveStory" />
+          <input
+            v-model="localStory.session_name"
+            :disabled="!isModerator"
+            @change="saveStory"
+          />
           <div class="roomcode">Room code: <strong>{{ roomId }}</strong></div>
         </div>
 
         <div class="identity">
           <div class="field">
             <label>Name</label>
-            <input v-model="identity.name" @change="syncIdentity" />
+            <input v-model="identity.name" :disabled="!isModerator" @change="syncIdentity" />
           </div>
 
           <div class="field">
             <label>Participation</label>
-            <select v-model="identity.participant_type" @change="syncIdentity">
+            <select
+              v-model="identity.participant_type"
+              :disabled="!canEditIdentityRole"
+              @change="syncIdentity"
+            >
               <option value="player">Player</option>
               <option value="observer">Observer</option>
             </select>
@@ -43,8 +98,8 @@
             <label>Team</label>
             <select
               v-model="identity.team"
+              :disabled="!canEditIdentityRole || identity.participant_type === 'observer'"
               @change="syncIdentity"
-              :disabled="identity.participant_type === 'observer'"
             >
               <option value="">No team</option>
               <option value="DEV">DEV</option>
@@ -54,21 +109,32 @@
         </div>
 
         <div class="button-row">
-          <button class="btn ghost" @click="copyRoom">Copy Room Link</button>
+          <button class="btn ghost" @click="copyRoom">Copy Join Link</button>
         </div>
       </div>
 
       <div class="layout">
         <aside class="panel sidebar">
           <div class="tabs">
-            <button class="tab" :class="{ active: activeTab === 'settings' }" @click="activeTab = 'settings'">Settings</button>
-            <button class="tab" :class="{ active: activeTab === 'general' }" @click="activeTab = 'general'">General Options</button>
-            <button class="tab" :class="{ active: activeTab === 'points' }" @click="activeTab = 'points'">Point Values</button>
+            <button
+              v-if="isModerator"
+              class="tab"
+              :class="{ active: activeTab === 'settings' }"
+              @click="activeTab = 'settings'"
+            >
+              Settings
+            </button>
+            <button class="tab" :class="{ active: activeTab === 'general' }" @click="activeTab = 'general'">
+              General Options
+            </button>
+            <button class="tab" :class="{ active: activeTab === 'points' }" @click="activeTab = 'points'">
+              Point Values
+            </button>
           </div>
 
-          <div v-if="!permissions.can_edit_settings" class="badge orange">Observer role required to edit settings</div>
+          <div v-if="!permissions.can_edit_settings" class="badge orange">Moderator access required</div>
 
-          <div v-if="activeTab === 'settings'">
+          <div v-if="activeTab === 'settings' && isModerator">
             <h3>Settings</h3>
             <p class="muted">Changes apply live and clear the current round so the point deck and permissions stay in sync.</p>
             <button class="btn ghost" :disabled="!permissions.can_edit_settings" @click="resetDefaults">
@@ -98,12 +164,30 @@
           <div v-if="activeTab === 'points'">
             <h3>Point Values</h3>
 
-            <div class="pv-row" v-for="(item, idx) in draftSettings.point_values" :key="idx">
+            <div
+              class="pv-row"
+              :class="{ dragging: dragPointIndex === idx }"
+              v-for="(item, idx) in draftSettings.point_values"
+              :key="idx"
+              :draggable="permissions.can_edit_settings"
+              @dragstart="startPointDrag(idx)"
+              @dragover.prevent
+              @drop="dropPoint(idx)"
+              @dragend="endPointDrag"
+            >
+              <button
+                class="drag-handle"
+                type="button"
+                :disabled="!permissions.can_edit_settings"
+                aria-label="Reorder point value"
+              >
+                <span></span>
+                <span></span>
+                <span></span>
+              </button>
               <input v-model="item.label" :disabled="!permissions.can_edit_settings" placeholder="Label" />
               <input v-model="item.value" :disabled="!permissions.can_edit_settings" placeholder="Value" />
               <div class="mini-actions">
-                <button class="mini" :disabled="!permissions.can_edit_settings || idx === 0" @click="movePoint(idx, -1)">↑</button>
-                <button class="mini" :disabled="!permissions.can_edit_settings || idx === draftSettings.point_values.length - 1" @click="movePoint(idx, 1)">↓</button>
                 <button class="mini" :disabled="!permissions.can_edit_settings" @click="removePoint(idx)">×</button>
               </div>
             </div>
@@ -131,12 +215,12 @@
 
             <div class="field">
               <label>Story title</label>
-              <input v-model="localStory.story_title" @change="saveStory" />
+              <input v-model="localStory.story_title" :disabled="!isModerator" @change="saveStory" />
             </div>
 
             <div v-if="state.settings.show_story_description" class="field">
               <label>Story description</label>
-              <textarea v-model="localStory.story_description" @change="saveStory"></textarea>
+              <textarea v-model="localStory.story_description" :disabled="!isModerator" @change="saveStory"></textarea>
             </div>
 
             <div class="button-row">
@@ -251,7 +335,7 @@
               </div>
               <div>
                 <button
-                  v-if="isModerator && person.user_id !== state.moderator_user_id && person.participant_type === 'observer'"
+                  v-if="isModerator && person.user_id !== state.moderator_user_id"
                   class="btn ghost"
                   @click="setModerator(person.user_id)"
                 >
@@ -283,12 +367,32 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { io } from 'socket.io-client'
 import { API_BASE, SOCKET_URL } from './config'
 
+const SESSION_STORAGE_ROOM_KEY = 'fusion_poker_joined_room'
+
+function parseRoomRoute(location) {
+  const params = new URLSearchParams(location.search)
+  const roomParam = params.get('room') || ''
+  const normalizedRoom = roomParam.endsWith('/join') ? roomParam.slice(0, -5) : roomParam
+  const joinFromQuery = roomParam.endsWith('/join')
+  const joinFromPath = location.pathname.replace(/\/+$/, '').endsWith('/join')
+
+  return {
+    roomId: normalizedRoom,
+    showJoin: !!normalizedRoom && (joinFromQuery || joinFromPath)
+  }
+}
+
+const routeState = parseRoomRoute(window.location)
 const createSessionName = ref('Fusion Refinement')
-const roomId = ref(new URLSearchParams(window.location.search).get('room') || '')
+const roomId = ref(routeState.roomId)
+const requiresJoinConfirmation = ref(routeState.showJoin)
+const joinedRoomId = ref(sessionStorage.getItem(SESSION_STORAGE_ROOM_KEY) || '')
 
 const activeTab = ref('settings')
 const selectedVote = ref(null)
 const socket = ref(null)
+const dragPointIndex = ref(null)
+const errorMessage = ref('')
 
 const identity = reactive({
   user_id: localStorage.getItem('fusion_poker_user_id') || crypto.randomUUID(),
@@ -330,21 +434,39 @@ const draftSettings = reactive({
   point_values: []
 })
 
+const isModerator = computed(() => state.moderator_user_id === identity.user_id)
+const canEditIdentityRole = computed(() => isModerator.value && !isLockedModerator.value)
+const isLockedModerator = computed(() => isModerator.value && identity.participant_type === 'observer')
+const showJoinScreen = computed(() => {
+  if (!roomId.value) return false
+  if (joinedRoomId.value === roomId.value) return false
+  return requiresJoinConfirmation.value
+})
+
 const permissions = computed(() => {
   const isPlayer = identity.participant_type === 'player'
   return {
     can_vote: isPlayer,
     can_show_votes: !!state.settings.allow_show_votes[isPlayer ? 'players' : 'observers'],
     can_reset_votes: !!state.settings.allow_reset_votes[isPlayer ? 'players' : 'observers'],
-    can_edit_settings: !isPlayer
+    can_edit_settings: isModerator.value
   }
 })
 
-const isModerator = computed(() => state.moderator_user_id === identity.user_id)
 const moderatorName = computed(() => {
   const found = state.participants.find(p => p.user_id === state.moderator_user_id)
   return found ? found.name : ''
 })
+
+function markRoomJoined() {
+  joinedRoomId.value = roomId.value
+  sessionStorage.setItem(SESSION_STORAGE_ROOM_KEY, roomId.value)
+  requiresJoinConfirmation.value = false
+
+  const url = new URL(window.location.href)
+  url.searchParams.set('room', roomId.value)
+  window.history.replaceState({}, '', url)
+}
 
 function applyIncomingState(payload) {
   state.session_name = payload.session_name
@@ -358,6 +480,18 @@ function applyIncomingState(payload) {
   state.history = payload.history
   state.moderator_user_id = payload.moderator_user_id
 
+  const me = payload.participants.find(participant => participant.user_id === identity.user_id)
+  if (me) {
+    identity.name = me.name || identity.name
+    identity.participant_type = me.participant_type || identity.participant_type
+    identity.team = me.team || ''
+    normalizeIdentity()
+  }
+
+  if (activeTab.value === 'settings' && !isModerator.value) {
+    activeTab.value = 'general'
+  }
+
   localStory.session_name = payload.session_name || ''
   localStory.story_title = payload.story_title || ''
   localStory.story_description = payload.story_description || ''
@@ -370,17 +504,30 @@ function applyIncomingState(payload) {
 }
 
 async function createRoom() {
-  const res = await fetch(`${API_BASE}/create`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_name: createSessionName.value })
-  })
-  const data = await res.json()
-  roomId.value = data.room
-  const url = new URL(window.location.href)
-  url.searchParams.set('room', roomId.value)
-  window.history.replaceState({}, '', url)
-  connectSocket()
+  errorMessage.value = ''
+  identity.participant_type = 'observer'
+  identity.team = ''
+  normalizeIdentity()
+
+  try {
+    const res = await fetch(`${API_BASE}/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_name: createSessionName.value })
+    })
+
+    if (!res.ok) {
+      throw new Error(`Backend returned ${res.status}`)
+    }
+
+    const data = await res.json()
+    roomId.value = data.room
+    markRoomJoined()
+    connectSocket()
+  } catch (error) {
+    errorMessage.value = 'Could not reach the backend on localhost:5000. Start the Flask server and try again.'
+    console.error(error)
+  }
 }
 
 function normalizeIdentity() {
@@ -397,8 +544,9 @@ function normalizeIdentity() {
 }
 
 function connectSocket() {
-  if (!roomId.value) return
+  if (!roomId.value || showJoinScreen.value) return
   normalizeIdentity()
+  errorMessage.value = ''
 
   if (socket.value) {
     socket.value.disconnect()
@@ -406,7 +554,12 @@ function connectSocket() {
 
   socket.value = io(SOCKET_URL)
 
+  socket.value.on('connect_error', () => {
+    errorMessage.value = 'Realtime connection failed. Make sure the backend is running on localhost:5000.'
+  })
+
   socket.value.on('connect', () => {
+    errorMessage.value = ''
     socket.value.emit('join', {
       room: roomId.value,
       user_id: identity.user_id,
@@ -425,7 +578,15 @@ function connectSocket() {
   })
 }
 
+function joinRoom() {
+  normalizeIdentity()
+  markRoomJoined()
+  connectSocket()
+}
+
 function syncIdentity() {
+  if (!isModerator.value) return
+
   normalizeIdentity()
   selectedVote.value = null
   socket.value?.emit('update_presence', {
@@ -438,8 +599,11 @@ function syncIdentity() {
 }
 
 function saveStory() {
+  if (!isModerator.value) return
+
   socket.value?.emit('update_story', {
     room: roomId.value,
+    user_id: identity.user_id,
     session_name: localStory.session_name,
     story_title: localStory.story_title,
     story_description: localStory.story_description
@@ -447,8 +611,11 @@ function saveStory() {
 }
 
 function saveSettings() {
+  if (!permissions.value.can_edit_settings) return
+
   socket.value?.emit('update_settings', {
     room: roomId.value,
+    user_id: identity.user_id,
     participant_type: identity.participant_type,
     settings: {
       show_story_description: draftSettings.show_story_description,
@@ -467,7 +634,7 @@ function resetDefaults() {
   draftSettings.allow_reset_votes = { players: false, observers: true }
   draftSettings.point_values = [
     { label: '0 points', value: '0' },
-    { label: '½ point', value: '0.5' },
+    { label: '1/2 point', value: '0.5' },
     { label: '1 point', value: '1' },
     { label: '2 points', value: '2' },
     { label: '3 points', value: '3' },
@@ -491,11 +658,22 @@ function removePoint(idx) {
   if (draftSettings.point_values.length === 0) addPoint()
 }
 
-function movePoint(idx, direction) {
-  const next = idx + direction
-  if (next < 0 || next >= draftSettings.point_values.length) return
+function startPointDrag(idx) {
+  if (!permissions.value.can_edit_settings) return
+  dragPointIndex.value = idx
+}
+
+function dropPoint(idx) {
+  if (dragPointIndex.value === null || dragPointIndex.value === idx) return
+
   const arr = draftSettings.point_values
-  ;[arr[idx], arr[next]] = [arr[next], arr[idx]]
+  const [moved] = arr.splice(dragPointIndex.value, 1)
+  arr.splice(idx, 0, moved)
+  dragPointIndex.value = null
+}
+
+function endPointDrag() {
+  dragPointIndex.value = null
 }
 
 function castVote(value) {
@@ -511,6 +689,7 @@ function castVote(value) {
 function revealVotes() {
   socket.value?.emit('reveal', {
     room: roomId.value,
+    user_id: identity.user_id,
     participant_type: identity.participant_type
   })
 }
@@ -519,6 +698,7 @@ function resetVotes() {
   selectedVote.value = null
   socket.value?.emit('reset_votes', {
     room: roomId.value,
+    user_id: identity.user_id,
     participant_type: identity.participant_type
   })
 }
@@ -545,13 +725,15 @@ function consensusBadgeClass(consensus) {
 
 async function copyRoom() {
   const url = new URL(window.location.href)
-  url.searchParams.set('room', roomId.value)
+  url.searchParams.set('room', `${roomId.value}/join`)
   await navigator.clipboard.writeText(url.toString())
-  alert('Room link copied.')
+  alert('Join link copied.')
 }
 
 onMounted(() => {
-  if (roomId.value) {
+  normalizeIdentity()
+
+  if (roomId.value && !showJoinScreen.value) {
     connectSocket()
   }
 })

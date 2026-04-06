@@ -11,6 +11,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 rooms = {}
+connections = {}
 
 DEFAULT_POINT_VALUES = [
     {"label": "0 points", "value": "0"},
@@ -48,6 +49,32 @@ def new_room(name="Untitled Session"):
         "history": [],
         "moderator_user_id": None,
     }
+
+def remove_participant(room_id, user_id):
+    room = rooms.get(room_id)
+    if not room:
+        return False
+
+    participant = room["participants"].get(user_id)
+    if participant and participant.get("sid") and participant.get("sid") != request.sid:
+        return False
+
+    removed = room["participants"].pop(user_id, None)
+    room["votes"].pop(user_id, None)
+
+    if removed is None:
+        return False
+
+    if room["moderator_user_id"] == user_id:
+        remaining_ids = list(room["participants"].keys())
+        room["moderator_user_id"] = remaining_ids[0] if remaining_ids else None
+        if room["moderator_user_id"]:
+            new_moderator = room["participants"][room["moderator_user_id"]]
+            new_moderator["participant_type"] = "observer"
+            new_moderator["team"] = ""
+            room["votes"].pop(room["moderator_user_id"], None)
+
+    return True
 
 def sanitize_points(items):
     cleaned = []
@@ -106,6 +133,15 @@ def compute_group(room, team_name):
 
 def room_payload(room_id):
     room = rooms[room_id]
+    participants = []
+    for participant in room["participants"].values():
+        participants.append({
+            "user_id": participant.get("user_id"),
+            "name": participant.get("name", "Anonymous"),
+            "team": participant.get("team", ""),
+            "participant_type": participant.get("participant_type", "player"),
+        })
+
     return {
         "room_id": room_id,
         "session_name": room["session_name"],
@@ -115,19 +151,20 @@ def room_payload(room_id):
         "settings": room["settings"],
         "history": room["history"],
         "moderator_user_id": room["moderator_user_id"],
-        "participants": list(room["participants"].values()),
+        "participants": participants,
         "dev": compute_group(room, "DEV"),
         "qa": compute_group(room, "QA"),
     }
 
-def user_permissions(room, participant_type):
+def user_permissions(room, user_id):
+    participant_type = room["participants"].get(user_id, {}).get("participant_type", "player")
     is_player = participant_type == "player"
     key = "players" if is_player else "observers"
     return {
         "can_vote": is_player,
         "can_show_votes": bool(room["settings"]["allow_show_votes"].get(key)),
         "can_reset_votes": bool(room["settings"]["allow_reset_votes"].get(key)),
-        "can_edit_settings": not is_player,
+        "can_edit_settings": user_id == room.get("moderator_user_id"),
     }
 
 @app.get("/health")
@@ -148,20 +185,23 @@ def on_join(data):
     room = rooms.setdefault(room_id, new_room())
 
     user_id = data["user_id"]
-    participant_type = data.get("participant_type", "player")
-    team = data.get("team", "DEV") if participant_type == "player" else ""
+    is_first_join = len(room["participants"]) == 0
+    participant_type = "observer" if is_first_join else data.get("participant_type", "player")
+    team = "" if participant_type == "observer" else data.get("team", "DEV")
 
     room["participants"][user_id] = {
         "user_id": user_id,
         "name": str(data.get("name", "Anonymous")).strip() or "Anonymous",
         "team": team,
         "participant_type": participant_type,
+        "sid": request.sid,
     }
 
-    if room["moderator_user_id"] is None and participant_type == "observer":
+    if room["moderator_user_id"] is None:
         room["moderator_user_id"] = user_id
 
     join_room(room_id)
+    connections[request.sid] = {"room_id": room_id, "user_id": user_id}
     emit("state", room_payload(room_id), room=room_id)
 
 @socketio.on("update_presence")
@@ -175,17 +215,22 @@ def on_update_presence(data):
     if user_id not in room["participants"]:
         return
 
-    participant_type = data.get("participant_type", room["participants"][user_id]["participant_type"])
-    requested_team = data.get("team", room["participants"][user_id].get("team", "DEV"))
+    if user_id == room.get("moderator_user_id"):
+        participant_type = "observer"
+        requested_team = ""
+    else:
+        participant_type = data.get("participant_type", room["participants"][user_id]["participant_type"])
+        requested_team = data.get("team", room["participants"][user_id].get("team", "DEV"))
 
     room["participants"][user_id]["name"] = str(data.get("name", "Anonymous")).strip() or "Anonymous"
     room["participants"][user_id]["participant_type"] = participant_type
     room["participants"][user_id]["team"] = requested_team if participant_type == "player" else ""
+    room["participants"][user_id]["sid"] = request.sid
 
     if participant_type != "player":
         room["votes"].pop(user_id, None)
 
-    if room["moderator_user_id"] is None and participant_type == "observer":
+    if room["moderator_user_id"] is None:
         room["moderator_user_id"] = user_id
 
     emit("state", room_payload(room_id), room=room_id)
@@ -212,7 +257,7 @@ def on_reveal(data):
     if not room:
         return
 
-    permissions = user_permissions(room, data.get("participant_type", "player"))
+    permissions = user_permissions(room, data.get("user_id"))
     if not permissions["can_show_votes"]:
         return
 
@@ -226,7 +271,7 @@ def on_reset_votes(data):
     if not room:
         return
 
-    permissions = user_permissions(room, data.get("participant_type", "player"))
+    permissions = user_permissions(room, data.get("user_id"))
     if not permissions["can_reset_votes"]:
         return
 
@@ -251,6 +296,10 @@ def on_update_story(data):
     if not room:
         return
 
+    requester_id = data.get("user_id")
+    if requester_id != room.get("moderator_user_id"):
+        return
+
     room["session_name"] = str(data.get("session_name", room["session_name"])).strip() or room["session_name"]
     room["story_title"] = str(data.get("story_title", room["story_title"])).strip()
     room["story_description"] = str(data.get("story_description", room["story_description"])).strip()
@@ -263,7 +312,7 @@ def on_update_settings(data):
     if not room:
         return
 
-    permissions = user_permissions(room, data.get("participant_type", "player"))
+    permissions = user_permissions(room, data.get("user_id"))
     if not permissions["can_edit_settings"]:
         return
 
@@ -297,11 +346,26 @@ def on_set_moderator(data):
 
     target_id = data.get("target_user_id")
     target = room["participants"].get(target_id)
-    if not target or target.get("participant_type") != "observer":
+    if not target:
         return
 
     room["moderator_user_id"] = target_id
+    target["participant_type"] = "observer"
+    target["team"] = ""
+    room["votes"].pop(target_id, None)
     emit("state", room_payload(room_id), room=room_id)
+
+@socketio.on("disconnect")
+def on_disconnect():
+    connection = connections.pop(request.sid, None)
+    if not connection:
+        return
+
+    room_id = connection["room_id"]
+    user_id = connection["user_id"]
+
+    if remove_participant(room_id, user_id):
+        emit("state", room_payload(room_id), room=room_id)
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
