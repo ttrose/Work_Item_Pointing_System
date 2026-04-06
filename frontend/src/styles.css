@@ -265,8 +265,12 @@ h1, h2, h3 { margin: 0 0 10px; }
 
 .split {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 16px;
+}
+
+.split.stacked {
+  grid-template-columns: 1fr;
 }
 
 .team-panel {
@@ -274,8 +278,7 @@ h1, h2, h3 { margin: 0 0 10px; }
   min-height: 360px;
 }
 
-.team-dev { border-top: 6px solid #2563eb; }
-.team-qa { border-top: 6px solid #16a34a; }
+.team-panel { border-top: 6px solid var(--brand); }
 
 .team-head {
   display: flex;
@@ -370,6 +373,46 @@ h1, h2, h3 { margin: 0 0 10px; }
 .check {
   display: block;
   margin: 10px 0;
+}
+
+.team-settings {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.queue-settings {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.queue-item {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-soft);
+}
+
+.queue-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.queue-item textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.team-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 10px;
+  align-items: center;
 }
 
 .pv-row {
