@@ -1,14 +1,22 @@
 from copy import deepcopy
+import os
 import uuid
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 
+def parse_allowed_origins():
+    raw = os.getenv("CORS_ORIGIN", "http://localhost:5173")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or ["http://localhost:5173"]
+
+ALLOWED_ORIGINS = parse_allowed_origins()
+
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "fusion-planning-poker"
-CORS(app, resources={r"/*": {"origins": "*"}})
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-only-change-me")
+CORS(app, resources={r"/*": {"origins": ALLOWED_ORIGINS}})
+socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS, async_mode="threading")
 
 rooms = {}
 connections = {}
@@ -368,4 +376,6 @@ def on_disconnect():
         emit("state", room_payload(room_id), room=room_id)
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    port = int(os.getenv("PORT", "5000"))
+    debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
+    socketio.run(app, host="0.0.0.0", port=port, debug=debug)

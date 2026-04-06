@@ -123,6 +123,13 @@ Then from the project root:
 docker compose up --build
 ```
 
+If you change any environment variables in `docker-compose.yml`, rebuild and restart:
+
+```bash
+docker compose down
+docker compose up --build
+```
+
 Frontend:
 ```text
 http://localhost:5173
@@ -151,6 +158,56 @@ npm run build
 npm run preview
 ```
 
+## Frontend environment setup
+
+Step three for public deployment is making the frontend read the backend API and Socket.IO URLs from Vite environment variables instead of hardcoded localhost values.
+
+The frontend now supports:
+
+- `VITE_API_BASE`
+- `VITE_SOCKET_URL`
+
+### Local example
+
+Create a file at `frontend/.env.local` with:
+
+```bash
+VITE_API_BASE=http://localhost:5000
+VITE_SOCKET_URL=http://localhost:5000
+```
+
+Then run:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Production example
+
+When you deploy the frontend, set environment variables like:
+
+```text
+VITE_API_BASE=https://your-backend-site.com
+VITE_SOCKET_URL=https://your-backend-site.com
+```
+
+### Docker example
+
+You can also pass the same variables into Docker Compose:
+
+```yaml
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE: "http://localhost:5000"
+      VITE_SOCKET_URL: "http://localhost:5000"
+```
+
 ### Backend
 ```bash
 cd backend
@@ -158,6 +215,65 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python3 app.py
+```
+
+## Backend environment setup
+
+Step two for public deployment is making the backend read its secret key, allowed frontend origin, and port from environment variables instead of hardcoded values.
+
+The backend now supports:
+
+- `SECRET_KEY`
+- `CORS_ORIGIN`
+- `PORT`
+- `FLASK_DEBUG`
+
+### Local example
+
+Run the backend with:
+
+```bash
+cd backend
+source .venv/bin/activate
+export SECRET_KEY="replace-this-with-a-long-random-value"
+export CORS_ORIGIN="http://localhost:5173"
+export PORT="5000"
+export FLASK_DEBUG="true"
+python3 app.py
+```
+
+### Production example
+
+When you deploy the backend, set environment variables like:
+
+```text
+SECRET_KEY=use-a-long-random-secret
+CORS_ORIGIN=https://your-frontend-site.com
+PORT=5000
+FLASK_DEBUG=false
+```
+
+If you need to allow more than one frontend origin, separate them with commas:
+
+```text
+CORS_ORIGIN=https://your-frontend-site.com,https://www.your-frontend-site.com
+```
+
+### Docker example
+
+You can also pass the same variables into Docker Compose:
+
+```yaml
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    environment:
+      SECRET_KEY: "replace-this-with-a-long-random-value"
+      CORS_ORIGIN: "http://localhost:5173"
+      PORT: "5000"
+      FLASK_DEBUG: "false"
 ```
 
 ### Docker
