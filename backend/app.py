@@ -376,6 +376,12 @@ def on_disconnect():
         emit("state", room_payload(room_id), room=room_id)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-    debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
-    socketio.run(app, host="0.0.0.0", port=port, debug=debug)
+    port = int(os.getenv(key="PORT", default="5000"))
+    debug = os.getenv(key="FLASK_DEBUG", default="true").lower() == "true"
+    socketio.run(
+        app=app,
+        host="0.0.0.0",
+        port=port,
+        debug=debug,
+        allow_unsafe_werkzeug=True
+    )
