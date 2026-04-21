@@ -1,4 +1,4 @@
-# Fusion Planning Poker - Full Vue Setup
+# Work Item Pointing System - Full Vue Setup
 
 This version uses a real frontend/backend split:
 

@@ -4,6 +4,7 @@ from ..domain import (
     default_settings,
     default_teams,
     default_work_items,
+    now_ms,
     new_room,
     sanitize_points,
     sanitize_teams,
@@ -16,6 +17,12 @@ def create_room(session_name):
     room_id = str(uuid.uuid4())[:6].upper()
     rooms[room_id] = new_room(session_name)
     return room_id
+
+
+def get_room_payload(room_id):
+    if room_id not in rooms:
+        return None
+    return room_payload(room_id)
 
 
 def resolve_team_id(room, requested_team_id):
@@ -38,6 +45,42 @@ def current_work_item(room):
         index = 0
         room["current_work_item_index"] = index
     return work_items[index]
+
+
+def item_elapsed_ms(item, timestamp=None):
+    elapsed_ms = int(item.get("elapsed_ms", 0) or 0)
+    started_at = item.get("timer_started_at")
+    if started_at is None:
+        return elapsed_ms
+
+    active_timestamp = now_ms() if timestamp is None else timestamp
+    return elapsed_ms + max(0, active_timestamp - int(started_at))
+
+
+def stop_item_timer(item, timestamp=None):
+    item["elapsed_ms"] = item_elapsed_ms(item, timestamp)
+    item["timer_started_at"] = None
+
+
+def start_item_timer(item, timestamp=None):
+    if item.get("timer_started_at") is not None:
+        return
+    item["timer_started_at"] = now_ms() if timestamp is None else timestamp
+
+
+def activate_current_work_item(room, timestamp=None):
+    start_item_timer(current_work_item(room), timestamp)
+
+
+def switch_current_work_item(room, next_index):
+    current_index = room.get("current_work_item_index", 0)
+    if next_index == current_index:
+        return
+
+    timestamp = now_ms()
+    stop_item_timer(current_work_item(room), timestamp)
+    room["current_work_item_index"] = next_index
+    start_item_timer(current_work_item(room), timestamp)
 
 
 def compute_group(room, team):
@@ -98,6 +141,7 @@ def room_payload(room_id):
     room = rooms[room_id]
     teams = room["settings"].get("teams", default_teams())
     item = current_work_item(room)
+    timestamp = now_ms()
     participants = []
     for participant in room["participants"].values():
         participants.append({
@@ -106,38 +150,82 @@ def room_payload(room_id):
             "team": participant.get("team", ""),
             "participant_type": participant.get("participant_type", "player"),
         })
+    team_lookup = {team["id"]: team["name"] for team in teams}
 
     return {
         "room_id": room_id,
+        "server_timestamp_ms": timestamp,
         "session_name": room["session_name"],
         "story_title": item["title"],
         "story_description": item.get("description", ""),
         "revealed": room["revealed"],
         "settings": room["settings"],
-        "work_items": room["work_items"],
+        "work_items": [{
+            **work_item,
+            "elapsed_ms": item_elapsed_ms(work_item, timestamp),
+        } for work_item in room["work_items"]],
         "current_work_item_index": room["current_work_item_index"],
-        "current_work_item": item,
+        "current_work_item": {
+            **item,
+            "elapsed_ms": item_elapsed_ms(item, timestamp),
+        },
         "history": room["history"],
         "moderator_user_id": room["moderator_user_id"],
         "participants": participants,
+        "team_change_requests": [{
+            **request,
+            "current_team_name": team_lookup.get(request.get("current_team"), ""),
+            "target_team_name": team_lookup.get(request.get("target_team"), request.get("target_team", "")),
+        } for request in room.get("team_change_requests", [])],
         "teams": [compute_group(room, team) for team in teams],
     }
 
 
+def moderator_claim_role(room):
+    if room.get("moderator_user_id") is not None:
+        return None
+
+    participant_values = list(room.get("participants", {}).values())
+    if not participant_values:
+        return None
+
+    if any(participant.get("participant_type") == "observer" for participant in participant_values):
+        return "observer"
+
+    if any(participant.get("participant_type") == "player" for participant in participant_values):
+        return "player"
+
+    return None
+
+
 def user_permissions(room, user_id):
-    participant_type = room["participants"].get(user_id, {}).get("participant_type", "player")
+    participant = room["participants"].get(user_id, {})
+    participant_type = participant.get("participant_type", "player")
+    is_moderator = user_id == room.get("moderator_user_id")
+    has_shared_observer_permissions = (
+        participant_type == "observer"
+        and bool(room["settings"].get("allow_observer_moderator_permissions"))
+    )
     is_player = participant_type == "player"
     key = "players" if is_player else "observers"
     return {
         "can_vote": is_player,
         "can_show_votes": bool(room["settings"]["allow_show_votes"].get(key)),
         "can_reset_votes": bool(room["settings"]["allow_reset_votes"].get(key)),
-        "can_edit_settings": user_id == room.get("moderator_user_id"),
+        "can_edit_settings": is_moderator or has_shared_observer_permissions,
     }
 
 
+def has_moderator_permissions(room, user_id):
+    return user_permissions(room, user_id).get("can_edit_settings", False)
+
+
+def has_recorded_votes(room):
+    return any(vote.get("vote") is not None for vote in room.get("votes", {}).values())
+
+
 def finalize_current_work_item(room):
-    if not room["revealed"]:
+    if not room["revealed"] or not has_recorded_votes(room):
         return
 
     item = current_work_item(room)
@@ -155,6 +243,7 @@ def finalize_current_work_item(room):
         "work_item_number": room["current_work_item_index"] + 1,
         "work_item_title": item["title"] or f"Work Item {room['current_work_item_index'] + 1}",
         "work_item_description": item.get("description", ""),
+        "elapsed_ms": item_elapsed_ms(item),
         "team_results": team_results,
     })
 
@@ -170,19 +259,17 @@ def remove_participant(room_id, user_id, sid):
 
     removed = room["participants"].pop(user_id, None)
     room["votes"].pop(user_id, None)
+    room["team_change_requests"] = [
+        request for request in room.get("team_change_requests", [])
+        if request.get("user_id") != user_id
+    ]
 
     if removed is None:
         return False
 
     if room["moderator_user_id"] == user_id:
-        remaining_ids = list(room["participants"].keys())
-        room["moderator_user_id"] = remaining_ids[0] if remaining_ids else None
-        if room["moderator_user_id"]:
-            new_moderator = room["participants"][room["moderator_user_id"]]
-            new_moderator["participant_type"] = "observer"
-            new_moderator["team"] = ""
-            room["votes"].pop(room["moderator_user_id"], None)
-        else:
+        room["moderator_user_id"] = None
+        if not room["participants"]:
             rooms.pop(room_id, None)
 
     return True
@@ -192,8 +279,7 @@ def join_session(room_id, sid, data):
     room = rooms.setdefault(room_id, new_room())
 
     user_id = data["user_id"]
-    is_first_join = len(room["participants"]) == 0
-    participant_type = "observer" if is_first_join else data.get("participant_type", "player")
+    participant_type = data.get("participant_type", "player")
     requested_team = data.get("team")
     team = "" if participant_type == "observer" else resolve_team_id(room, requested_team)
 
@@ -208,6 +294,8 @@ def join_session(room_id, sid, data):
     if room["moderator_user_id"] is None:
         room["moderator_user_id"] = user_id
 
+    activate_current_work_item(room)
+
     connections[sid] = {"room_id": room_id, "user_id": user_id}
     return room_payload(room_id)
 
@@ -221,15 +309,11 @@ def update_presence(room_id, sid, data):
     if user_id not in room["participants"]:
         return None
 
-    if user_id == room.get("moderator_user_id"):
-        participant_type = "observer"
-        requested_team = ""
-    else:
-        participant_type = data.get("participant_type", room["participants"][user_id]["participant_type"])
-        requested_team = resolve_team_id(
-            room,
-            data.get("team", room["participants"][user_id].get("team", "")),
-        )
+    participant_type = data.get("participant_type", room["participants"][user_id]["participant_type"])
+    requested_team = resolve_team_id(
+        room,
+        data.get("team", room["participants"][user_id].get("team", "")),
+    )
 
     room["participants"][user_id]["name"] = str(data.get("name", "Anonymous")).strip() or "Anonymous"
     room["participants"][user_id]["participant_type"] = participant_type
@@ -238,6 +322,10 @@ def update_presence(room_id, sid, data):
 
     if participant_type != "player":
         room["votes"].pop(user_id, None)
+        room["team_change_requests"] = [
+            request for request in room.get("team_change_requests", [])
+            if request.get("user_id") != user_id
+        ]
 
     if room["moderator_user_id"] is None:
         room["moderator_user_id"] = user_id
@@ -295,7 +383,7 @@ def update_story(room_id, data):
         return None
 
     requester_id = data.get("user_id")
-    if requester_id != room.get("moderator_user_id"):
+    if not has_moderator_permissions(room, requester_id):
         return None
 
     room["session_name"] = str(data.get("session_name", room["session_name"])).strip() or room["session_name"]
@@ -311,11 +399,19 @@ def update_work_items(room_id, data):
         return None
 
     requester_id = data.get("user_id")
-    if requester_id != room.get("moderator_user_id"):
+    if not has_moderator_permissions(room, requester_id):
         return None
 
     work_items = sanitize_work_items(data.get("work_items"))
+    existing_items_by_id = {item["id"]: item for item in room.get("work_items", [])}
     current_item_id = str(data.get("current_work_item_id", current_work_item(room)["id"]))
+    for item in work_items:
+        existing = existing_items_by_id.get(item["id"])
+        if not existing:
+            continue
+        item["elapsed_ms"] = int(existing.get("elapsed_ms", 0) or 0)
+        item["timer_started_at"] = existing.get("timer_started_at")
+
     room["work_items"] = work_items
 
     matched_index = next((index for index, item in enumerate(work_items) if item["id"] == current_item_id), None)
@@ -327,6 +423,9 @@ def update_work_items(room_id, data):
     else:
         room["current_work_item_index"] = 0
 
+    if room.get("participants"):
+        activate_current_work_item(room)
+
     return room_payload(room_id)
 
 
@@ -336,7 +435,7 @@ def navigate_work_item(room_id, data):
         return None
 
     requester_id = data.get("user_id")
-    if requester_id != room.get("moderator_user_id"):
+    if not has_moderator_permissions(room, requester_id):
         return None
 
     work_items = room.get("work_items") or default_work_items()
@@ -350,7 +449,34 @@ def navigate_work_item(room_id, data):
     if room["revealed"]:
         finalize_current_work_item(room)
 
-    room["current_work_item_index"] = next_index
+    switch_current_work_item(room, next_index)
+    room["votes"] = {}
+    room["revealed"] = False
+    return room_payload(room_id)
+
+
+def set_current_work_item(room_id, data):
+    room = rooms.get(room_id)
+    if not room:
+        return None
+
+    requester_id = data.get("user_id")
+    if not has_moderator_permissions(room, requester_id):
+        return None
+
+    work_items = room.get("work_items") or default_work_items()
+    target_index = data.get("target_index")
+    if not isinstance(target_index, int) or target_index < 0 or target_index >= len(work_items):
+        return None
+
+    current_index = room.get("current_work_item_index", 0)
+    if target_index == current_index:
+        return room_payload(room_id)
+
+    if room["revealed"]:
+        finalize_current_work_item(room)
+
+    switch_current_work_item(room, target_index)
     room["votes"] = {}
     room["revealed"] = False
     return room_payload(room_id)
@@ -369,6 +495,10 @@ def update_settings(room_id, data):
     room["settings"]["show_story_description"] = bool(incoming.get("show_story_description", True))
     room["settings"]["show_history"] = bool(incoming.get("show_history", True))
     room["settings"]["show_team_boxes"] = bool(incoming.get("show_team_boxes", True))
+    if data.get("user_id") == room.get("moderator_user_id"):
+        room["settings"]["allow_observer_moderator_permissions"] = bool(
+            incoming.get("allow_observer_moderator_permissions", False)
+        )
     room["settings"]["allow_show_votes"] = {
         "players": bool(incoming.get("allow_show_votes", {}).get("players", False)),
         "observers": bool(incoming.get("allow_show_votes", {}).get("observers", True)),
@@ -389,8 +519,82 @@ def update_settings(room_id, data):
         if participant.get("team") not in valid_team_ids:
             participant["team"] = fallback_team_id
 
+    room["team_change_requests"] = [
+        request for request in room.get("team_change_requests", [])
+        if request.get("user_id") in room["participants"]
+        and request.get("target_team") in valid_team_ids
+        and room["participants"][request.get("user_id", "")].get("participant_type") == "player"
+    ]
+
     room["votes"] = {}
     room["revealed"] = False
+    return room_payload(room_id)
+
+
+def request_team_change(room_id, data):
+    room = rooms.get(room_id)
+    if not room:
+        return None
+
+    user_id = data.get("user_id")
+    participant = room["participants"].get(user_id)
+    if not participant or participant.get("participant_type") != "player":
+        return None
+
+    if user_id == room.get("moderator_user_id"):
+        return None
+
+    target_team = resolve_team_id(room, data.get("target_team"))
+    current_team = participant.get("team")
+    if not current_team or target_team == current_team:
+        return None
+
+    room["team_change_requests"] = [
+        request for request in room.get("team_change_requests", [])
+        if request.get("user_id") != user_id
+    ]
+    room["team_change_requests"].append({
+        "request_id": f"team-change-{uuid.uuid4()}",
+        "user_id": user_id,
+        "user_name": participant.get("name", "Anonymous"),
+        "current_team": current_team,
+        "target_team": target_team,
+    })
+    return room_payload(room_id)
+
+
+def respond_team_change_request(room_id, data):
+    room = rooms.get(room_id)
+    if not room:
+        return None
+
+    requester_id = data.get("user_id")
+    if not has_moderator_permissions(room, requester_id):
+        return None
+
+    request_id = data.get("request_id")
+    action = str(data.get("action", "")).strip().lower()
+    if action not in {"approve", "decline"}:
+        return None
+
+    matched_request = next(
+        (request for request in room.get("team_change_requests", []) if request.get("request_id") == request_id),
+        None,
+    )
+    if not matched_request:
+        return None
+
+    participant = room["participants"].get(matched_request.get("user_id"))
+    valid_team_ids = {team["id"] for team in room["settings"].get("teams", default_teams())}
+    if action == "approve" and participant and participant.get("participant_type") == "player":
+        target_team = matched_request.get("target_team")
+        if target_team in valid_team_ids:
+            participant["team"] = target_team
+
+    room["team_change_requests"] = [
+        request for request in room.get("team_change_requests", [])
+        if request.get("request_id") != request_id
+    ]
     return room_payload(room_id)
 
 
@@ -409,9 +613,30 @@ def set_moderator(room_id, data):
         return None
 
     room["moderator_user_id"] = target_id
-    target["participant_type"] = "observer"
-    target["team"] = ""
-    room["votes"].pop(target_id, None)
+    return room_payload(room_id)
+
+
+def claim_moderator(room_id, data):
+    room = rooms.get(room_id)
+    if not room:
+        return None
+
+    if room.get("moderator_user_id") is not None:
+        return None
+
+    user_id = data.get("user_id")
+    participant = room["participants"].get(user_id)
+    if not participant:
+        return None
+
+    eligible_role = moderator_claim_role(room)
+    if eligible_role is None:
+        return None
+
+    if participant.get("participant_type") != eligible_role:
+        return None
+
+    room["moderator_user_id"] = user_id
     return room_payload(room_id)
 
 

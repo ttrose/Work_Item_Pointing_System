@@ -1,10 +1,10 @@
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { io } from 'socket.io-client'
 
 import { API_BASE, SOCKET_URL } from '../config'
 
-const SESSION_STORAGE_ROOM_KEY = 'fusion_poker_joined_room'
-const THEME_STORAGE_KEY = 'fusion_poker_theme'
+const SESSION_STORAGE_ROOM_KEY = 'work_item_planning_session_joined_room'
+const THEME_STORAGE_KEY = 'work_item_planning_session_theme'
 
 function parseRoomRoute(location) {
   const params = new URLSearchParams(location.search)
@@ -21,7 +21,7 @@ function parseRoomRoute(location) {
 
 export function useSessionApp() {
   const routeState = parseRoomRoute(window.location)
-  const createSessionName = ref('Fusion Refinement')
+  const createSessionName = ref('Work Item Planning Session')
   const roomId = ref(routeState.roomId)
   const requiresJoinConfirmation = ref(routeState.showJoin)
   const joinedRoomId = ref(sessionStorage.getItem(SESSION_STORAGE_ROOM_KEY) || '')
@@ -30,14 +30,19 @@ export function useSessionApp() {
   const selectedVote = ref(null)
   const socket = ref(null)
   const dragPointIndex = ref(null)
+  const dragWorkItemIndex = ref(null)
   const errorMessage = ref('')
   const isDarkMode = ref(localStorage.getItem(THEME_STORAGE_KEY) === 'dark')
+  const teamChangeDraft = ref('')
+  const currentTimestamp = ref(Date.now())
+  let joinPreviewInterval = null
+  let clockInterval = null
 
   const identity = reactive({
-    user_id: localStorage.getItem('fusion_poker_user_id') || crypto.randomUUID(),
-    name: localStorage.getItem('fusion_poker_name') || 'Anonymous',
-    participant_type: localStorage.getItem('fusion_poker_type') || 'player',
-    team: localStorage.getItem('fusion_poker_team') || 'team-1'
+    user_id: localStorage.getItem('work_item_planning_session_user_id') || crypto.randomUUID(),
+    name: localStorage.getItem('work_item_planning_session_name') || 'Anonymous',
+    participant_type: localStorage.getItem('work_item_planning_session_type') || 'player',
+    team: localStorage.getItem('work_item_planning_session_team') || 'team-1'
   })
 
   const state = reactive({
@@ -49,6 +54,7 @@ export function useSessionApp() {
       show_story_description: true,
       show_history: true,
       show_team_boxes: true,
+      allow_observer_moderator_permissions: false,
       allow_show_votes: { players: false, observers: true },
       allow_reset_votes: { players: false, observers: true },
       teams: [{ id: 'team-1', name: 'Team 1' }],
@@ -60,7 +66,9 @@ export function useSessionApp() {
     participants: [],
     teams: [],
     history: [],
-    moderator_user_id: null
+    team_change_requests: [],
+    moderator_user_id: null,
+    server_timestamp_ms: Date.now()
   })
 
   const localStory = reactive({
@@ -73,6 +81,7 @@ export function useSessionApp() {
     show_story_description: true,
     show_history: true,
     show_team_boxes: true,
+    allow_observer_moderator_permissions: false,
     allow_show_votes: { players: false, observers: true },
     allow_reset_votes: { players: false, observers: true },
     teams: [{ id: 'team-1', name: 'Team 1' }],
@@ -82,8 +91,8 @@ export function useSessionApp() {
   const draftWorkItems = ref([])
 
   const isModerator = computed(() => state.moderator_user_id === identity.user_id)
-  const canEditIdentityRole = computed(() => isModerator.value && !isLockedModerator.value)
-  const isLockedModerator = computed(() => isModerator.value && identity.participant_type === 'observer')
+  const canEditIdentityRole = computed(() => isModerator.value)
+  const isLockedModerator = computed(() => false)
   const showJoinScreen = computed(() => {
     if (!roomId.value) return false
     if (joinedRoomId.value === roomId.value) return false
@@ -92,11 +101,15 @@ export function useSessionApp() {
 
   const permissions = computed(() => {
     const isPlayer = identity.participant_type === 'player'
+    const hasSharedObserverModeratorPermissions = (
+      identity.participant_type === 'observer' &&
+      !!state.settings.allow_observer_moderator_permissions
+    )
     return {
       can_vote: isPlayer,
       can_show_votes: !!state.settings.allow_show_votes[isPlayer ? 'players' : 'observers'],
       can_reset_votes: !!state.settings.allow_reset_votes[isPlayer ? 'players' : 'observers'],
-      can_edit_settings: isModerator.value
+      can_edit_settings: isModerator.value || hasSharedObserverModeratorPermissions
     }
   })
 
@@ -104,6 +117,36 @@ export function useSessionApp() {
     const found = state.participants.find(p => p.user_id === state.moderator_user_id)
     return found ? found.name : ''
   })
+
+  const moderatorClaimRole = computed(() => {
+    if (state.moderator_user_id) return null
+
+    const hasObservers = state.participants.some(participant => participant.participant_type === 'observer')
+    if (hasObservers) return 'observer'
+
+    const hasPlayers = state.participants.some(participant => participant.participant_type === 'player')
+    return hasPlayers ? 'player' : null
+  })
+
+  const canClaimModerator = computed(() => (
+    !!moderatorClaimRole.value &&
+    identity.participant_type === moderatorClaimRole.value
+  ))
+
+  const joinTeamOptions = computed(() => {
+    if (identity.participant_type === 'observer') {
+      return [{ id: '', name: 'No team' }]
+    }
+    return state.settings.teams
+  })
+
+  const pendingTeamChangeRequest = computed(() => (
+    state.team_change_requests.find(request => request.user_id === identity.user_id) || null
+  ))
+
+  const availableTeamChangeOptions = computed(() => (
+    state.settings.teams.filter(team => team.id !== identity.team)
+  ))
 
   function applyTheme() {
     document.body.classList.toggle('theme-dark', isDarkMode.value)
@@ -137,7 +180,9 @@ export function useSessionApp() {
     state.participants = payload.participants
     state.teams = payload.teams
     state.history = payload.history
+    state.team_change_requests = payload.team_change_requests || []
     state.moderator_user_id = payload.moderator_user_id
+    state.server_timestamp_ms = payload.server_timestamp_ms || Date.now()
 
     const me = payload.participants.find(participant => participant.user_id === identity.user_id)
     if (me) {
@@ -147,7 +192,7 @@ export function useSessionApp() {
       normalizeIdentity()
     }
 
-    if (activeTab.value === 'settings' && !isModerator.value) {
+    if (activeTab.value === 'settings' && !permissions.value.can_edit_settings) {
       activeTab.value = 'general'
     }
 
@@ -158,17 +203,20 @@ export function useSessionApp() {
     draftSettings.show_story_description = payload.settings.show_story_description
     draftSettings.show_history = payload.settings.show_history
     draftSettings.show_team_boxes = payload.settings.show_team_boxes
+    draftSettings.allow_observer_moderator_permissions = !!payload.settings.allow_observer_moderator_permissions
     draftSettings.allow_show_votes = { ...payload.settings.allow_show_votes }
     draftSettings.allow_reset_votes = { ...payload.settings.allow_reset_votes }
     draftSettings.teams = payload.settings.teams.map(team => ({ ...team }))
     draftSettings.point_values = payload.settings.point_values.map(p => ({ ...p }))
     draftWorkItems.value = payload.work_items.map(item => ({ ...item }))
+
+    if (!pendingTeamChangeRequest.value) {
+      teamChangeDraft.value = availableTeamChangeOptions.value[0]?.id || ''
+    }
   }
 
   async function createRoom() {
     errorMessage.value = ''
-    identity.participant_type = 'observer'
-    identity.team = ''
     normalizeIdentity()
 
     try {
@@ -192,6 +240,49 @@ export function useSessionApp() {
     }
   }
 
+  async function refreshJoinPreview() {
+    if (!roomId.value || !showJoinScreen.value) return
+
+    try {
+      const res = await fetch(`${API_BASE}/rooms/${roomId.value}`)
+      if (!res.ok) return
+
+      const payload = await res.json()
+      applyIncomingState(payload)
+      errorMessage.value = ''
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  function startJoinPreviewPolling() {
+    if (!showJoinScreen.value || joinPreviewInterval) return
+
+    refreshJoinPreview()
+    joinPreviewInterval = window.setInterval(() => {
+      refreshJoinPreview()
+    }, 2000)
+  }
+
+  function stopJoinPreviewPolling() {
+    if (!joinPreviewInterval) return
+    window.clearInterval(joinPreviewInterval)
+    joinPreviewInterval = null
+  }
+
+  function startClock() {
+    if (clockInterval) return
+    clockInterval = window.setInterval(() => {
+      currentTimestamp.value = Date.now()
+    }, 1000)
+  }
+
+  function stopClock() {
+    if (!clockInterval) return
+    window.clearInterval(clockInterval)
+    clockInterval = null
+  }
+
   function normalizeIdentity() {
     if (identity.participant_type === 'observer') {
       identity.team = ''
@@ -203,10 +294,10 @@ export function useSessionApp() {
       }
     }
 
-    localStorage.setItem('fusion_poker_user_id', identity.user_id)
-    localStorage.setItem('fusion_poker_name', identity.name)
-    localStorage.setItem('fusion_poker_type', identity.participant_type)
-    localStorage.setItem('fusion_poker_team', identity.team)
+    localStorage.setItem('work_item_planning_session_user_id', identity.user_id)
+    localStorage.setItem('work_item_planning_session_name', identity.name)
+    localStorage.setItem('work_item_planning_session_type', identity.participant_type)
+    localStorage.setItem('work_item_planning_session_team', identity.team)
   }
 
   function connectSocket() {
@@ -246,8 +337,34 @@ export function useSessionApp() {
 
   function joinRoom() {
     normalizeIdentity()
+    stopJoinPreviewPolling()
     markRoomJoined()
     connectSocket()
+  }
+
+  function requestTeamChange() {
+    if (identity.participant_type !== 'player' || !teamChangeDraft.value) return
+
+    socket.value?.emit('request_team_change', {
+      room: roomId.value,
+      user_id: identity.user_id,
+      target_team: teamChangeDraft.value
+    })
+  }
+
+  function setTeamChangeDraft(value) {
+    teamChangeDraft.value = value
+  }
+
+  function respondTeamChangeRequest(requestId, action) {
+    if (!permissions.value.can_edit_settings) return
+
+    socket.value?.emit('respond_team_change_request', {
+      room: roomId.value,
+      user_id: identity.user_id,
+      request_id: requestId,
+      action
+    })
   }
 
   function syncIdentity() {
@@ -265,7 +382,7 @@ export function useSessionApp() {
   }
 
   function saveStory() {
-    if (!isModerator.value) return
+    if (!permissions.value.can_edit_settings) return
 
     socket.value?.emit('update_story', {
       room: roomId.value,
@@ -287,6 +404,7 @@ export function useSessionApp() {
         show_story_description: draftSettings.show_story_description,
         show_history: draftSettings.show_history,
         show_team_boxes: draftSettings.show_team_boxes,
+        allow_observer_moderator_permissions: draftSettings.allow_observer_moderator_permissions,
         allow_show_votes: draftSettings.allow_show_votes,
         allow_reset_votes: draftSettings.allow_reset_votes,
         teams: draftSettings.teams,
@@ -310,6 +428,7 @@ export function useSessionApp() {
     draftSettings.show_story_description = true
     draftSettings.show_history = true
     draftSettings.show_team_boxes = true
+    draftSettings.allow_observer_moderator_permissions = false
     draftSettings.allow_show_votes = { players: false, observers: true }
     draftSettings.allow_reset_votes = { players: false, observers: true }
     draftSettings.teams = [{ id: 'team-1', name: 'Team 1' }]
@@ -336,11 +455,13 @@ export function useSessionApp() {
       title: `Work Item ${draftWorkItems.value.length + 1}`,
       description: ''
     })
+    saveWorkItems()
   }
 
   function removeWorkItem(idx) {
     if (draftWorkItems.value.length === 1) return
     draftWorkItems.value.splice(idx, 1)
+    saveWorkItems()
   }
 
   function moveWorkItem(idx, direction) {
@@ -348,6 +469,7 @@ export function useSessionApp() {
     if (next < 0 || next >= draftWorkItems.value.length) return
     const items = draftWorkItems.value
     ;[items[idx], items[next]] = [items[next], items[idx]]
+    saveWorkItems()
   }
 
   function addTeam() {
@@ -355,11 +477,13 @@ export function useSessionApp() {
       id: `team-${crypto.randomUUID()}`,
       name: `Team ${draftSettings.teams.length + 1}`
     })
+    saveSettings()
   }
 
   function removeTeam(idx) {
     if (draftSettings.teams.length === 1) return
     draftSettings.teams.splice(idx, 1)
+    saveSettings()
   }
 
   function addPoint() {
@@ -386,6 +510,24 @@ export function useSessionApp() {
 
   function endPointDrag() {
     dragPointIndex.value = null
+  }
+
+  function startWorkItemDrag(idx) {
+    if (!permissions.value.can_edit_settings) return
+    dragWorkItemIndex.value = idx
+  }
+
+  function dropWorkItem(idx) {
+    if (dragWorkItemIndex.value === null || dragWorkItemIndex.value === idx) return
+    const arr = draftWorkItems.value
+    const [moved] = arr.splice(dragWorkItemIndex.value, 1)
+    arr.splice(idx, 0, moved)
+    dragWorkItemIndex.value = null
+    saveWorkItems()
+  }
+
+  function endWorkItemDrag() {
+    dragWorkItemIndex.value = null
   }
 
   function castVote(value) {
@@ -423,11 +565,30 @@ export function useSessionApp() {
     })
   }
 
+  function setCurrentWorkItem(targetIndex) {
+    if (!permissions.value.can_edit_settings) return
+
+    socket.value?.emit('set_current_work_item', {
+      room: roomId.value,
+      user_id: identity.user_id,
+      target_index: targetIndex
+    })
+  }
+
   function setModerator(targetUserId) {
     socket.value?.emit('set_moderator', {
       room: roomId.value,
       requester_user_id: identity.user_id,
       target_user_id: targetUserId
+    })
+  }
+
+  function claimModerator() {
+    if (!canClaimModerator.value) return
+
+    socket.value?.emit('claim_moderator', {
+      room: roomId.value,
+      user_id: identity.user_id
     })
   }
 
@@ -441,6 +602,30 @@ export function useSessionApp() {
 
   function formatStat(value) {
     return value === null || value === undefined ? '—' : value
+  }
+
+  function getLiveElapsedMs(item) {
+    if (!item) return 0
+
+    const baseElapsed = Number(item.elapsed_ms || 0)
+    if (!item.timer_started_at) {
+      return baseElapsed
+    }
+
+    return baseElapsed + Math.max(0, currentTimestamp.value - state.server_timestamp_ms)
+  }
+
+  function formatDuration(milliseconds) {
+    const totalSeconds = Math.max(0, Math.floor((milliseconds || 0) / 1000))
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    }
+
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
   }
 
   function consensusBadgeClass(consensus) {
@@ -457,10 +642,18 @@ export function useSessionApp() {
   onMounted(() => {
     applyTheme()
     normalizeIdentity()
+    startClock()
 
-    if (roomId.value && !showJoinScreen.value) {
+    if (showJoinScreen.value) {
+      startJoinPreviewPolling()
+    } else if (roomId.value) {
       connectSocket()
     }
+  })
+
+  onBeforeUnmount(() => {
+    stopClock()
+    stopJoinPreviewPolling()
   })
 
   return {
@@ -469,47 +662,64 @@ export function useSessionApp() {
     addTeam,
     addWorkItem,
     canEditIdentityRole,
+    canClaimModerator,
     castVote,
+    claimModerator,
     consensusBadgeClass,
     copyRoom,
     createRoom,
     createSessionName,
     dragPointIndex,
+    dragWorkItemIndex,
     draftSettings,
     draftWorkItems,
     dropPoint,
     endPointDrag,
+    endWorkItemDrag,
     errorMessage,
+    formatDuration,
     formatStat,
+    getLiveElapsedMs,
     identity,
     isDarkMode,
     isLockedModerator,
     isModerator,
     joinRoom,
+    joinTeamOptions,
     localStory,
     moderatorName,
+    moderatorClaimRole,
     moveWorkItem,
     navigateWorkItem,
     normalizeIdentity,
+    pendingTeamChangeRequest,
     permissions,
     prettyParticipant,
+    requestTeamChange,
     removePoint,
     removeTeam,
     removeWorkItem,
     resetDefaults,
     resetVotes,
     revealVotes,
+    respondTeamChangeRequest,
     roomId,
     saveSettings,
     saveStory,
     saveWorkItems,
     selectedVote,
     setModerator,
+    setCurrentWorkItem,
     showJoinScreen,
     startPointDrag,
+    startWorkItemDrag,
     state,
     syncIdentity,
+    setTeamChangeDraft,
+    teamChangeDraft,
     teamName,
     toggleTheme,
+    availableTeamChangeOptions,
+    dropWorkItem,
   }
 }

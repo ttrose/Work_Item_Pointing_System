@@ -3,7 +3,7 @@
     <ThemeToggle :isDarkMode="isDarkMode" @toggle="toggleTheme" />
 
     <div v-if="!roomId" class="panel hero">
-      <h1>Fusion Planning Poker</h1>
+      <h1>Work Item Planning Session</h1>
       <p class="muted">
         Single-session planning poker with flexible team estimation, moderator controls,
         live settings, and permission-aware actions.
@@ -12,7 +12,7 @@
 
       <div class="field">
         <label>Session name</label>
-        <input v-model="createSessionName" placeholder="Fusion Refinement" />
+        <input v-model="createSessionName" placeholder="New Session" />
       </div>
 
       <div class="field">
@@ -53,8 +53,7 @@
             @change="normalizeIdentity"
             :disabled="identity.participant_type === 'observer'"
           >
-            <option value="">No team</option>
-            <option v-for="team in state.settings.teams" :key="team.id" :value="team.id">{{ team.name }}</option>
+            <option v-for="team in joinTeamOptions" :key="team.id || 'no-team'" :value="team.id">{{ team.name }}</option>
           </select>
         </div>
       </div>
@@ -71,39 +70,53 @@
       :addTeam="addTeam"
       :addWorkItem="addWorkItem"
       :canEditIdentityRole="canEditIdentityRole"
+      :canClaimModerator="canClaimModerator"
       :castVote="castVote"
+      :claimModerator="claimModerator"
       :consensusBadgeClass="consensusBadgeClass"
       :copyRoom="copyRoom"
       :dragPointIndex="dragPointIndex"
+      :dragWorkItemIndex="dragWorkItemIndex"
       :draftSettings="draftSettings"
       :draftWorkItems="draftWorkItems"
       :dropPoint="dropPoint"
+      :dropWorkItem="dropWorkItem"
       :endPointDrag="endPointDrag"
+      :endWorkItemDrag="endWorkItemDrag"
       :errorMessage="errorMessage"
+      :formatDuration="formatDuration"
       :formatStat="formatStat"
+      :getLiveElapsedMs="getLiveElapsedMs"
       :identity="identity"
       :isModerator="isModerator"
       :localStory="localStory"
       :moderatorName="moderatorName"
-      :moveWorkItem="moveWorkItem"
+      :moderatorClaimRole="moderatorClaimRole"
       :navigateWorkItem="navigateWorkItem"
+      :pendingTeamChangeRequest="pendingTeamChangeRequest"
       :permissions="permissions"
       :prettyParticipant="prettyParticipant"
+      :availableTeamChangeOptions="availableTeamChangeOptions"
+      :requestTeamChange="requestTeamChange"
       :removePoint="removePoint"
       :removeTeam="removeTeam"
       :removeWorkItem="removeWorkItem"
       :resetDefaults="resetDefaults"
       :resetVotes="resetVotes"
       :revealVotes="revealVotes"
+      :respondTeamChangeRequest="respondTeamChangeRequest"
       :roomId="roomId"
       :saveSettings="saveSettings"
       :saveStory="saveStory"
-      :saveWorkItems="saveWorkItems"
+      :setTeamChangeDraft="setTeamChangeDraft"
       :selectedVote="selectedVote"
       :setModerator="setModerator"
+      :setCurrentWorkItem="setCurrentWorkItem"
       :startPointDrag="startPointDrag"
+      :startWorkItemDrag="startWorkItemDrag"
       :state="state"
       :syncIdentity="syncIdentity"
+      :teamChangeDraft="teamChangeDraft"
       :teamName="teamName"
       @update:activeTab="activeTab = $event"
     />
@@ -124,46 +137,61 @@ const {
   addTeam,
   addWorkItem,
   canEditIdentityRole,
+  canClaimModerator,
   castVote,
+  claimModerator,
   consensusBadgeClass,
   copyRoom,
   createRoom,
   createSessionName,
   dragPointIndex,
+  dragWorkItemIndex,
   draftSettings,
   draftWorkItems,
   dropPoint,
+  dropWorkItem,
   endPointDrag,
+  endWorkItemDrag,
   errorMessage,
+  formatDuration,
   formatStat,
+  getLiveElapsedMs,
   identity,
   isDarkMode,
   isModerator,
   joinRoom,
+  joinTeamOptions,
   localStory,
   moderatorName,
-  moveWorkItem,
+  moderatorClaimRole,
   navigateWorkItem,
   normalizeIdentity,
+  pendingTeamChangeRequest,
   permissions,
   prettyParticipant,
+  requestTeamChange,
   removePoint,
   removeTeam,
   removeWorkItem,
   resetDefaults,
   resetVotes,
   revealVotes,
+  respondTeamChangeRequest,
   roomId,
   saveSettings,
   saveStory,
-  saveWorkItems,
+  setTeamChangeDraft,
   selectedVote,
   setModerator,
+  setCurrentWorkItem,
   showJoinScreen,
   startPointDrag,
+  startWorkItemDrag,
   state,
   syncIdentity,
+  teamChangeDraft,
   teamName,
   toggleTheme,
+  availableTeamChangeOptions,
 } = useSessionApp()
 </script>

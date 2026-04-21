@@ -1,4 +1,5 @@
 from copy import deepcopy
+from time import time
 
 
 DEFAULT_POINT_VALUES = [
@@ -21,8 +22,12 @@ DEFAULT_TEAMS = [
 ]
 
 DEFAULT_WORK_ITEMS = [
-    {"id": "work-item-1", "title": "Work Item 1", "description": ""},
+    {"id": "work-item-1", "title": "Work Item 1", "description": "", "elapsed_ms": 0, "timer_started_at": None},
 ]
+
+
+def now_ms():
+    return int(time() * 1000)
 
 
 def default_teams():
@@ -38,6 +43,7 @@ def default_settings():
         "show_story_description": True,
         "show_history": True,
         "show_team_boxes": True,
+        "allow_observer_moderator_permissions": False,
         "allow_show_votes": {"players": False, "observers": True},
         "allow_reset_votes": {"players": False, "observers": True},
         "teams": default_teams(),
@@ -55,6 +61,7 @@ def new_room(name="Untitled Session"):
         "work_items": default_work_items(),
         "current_work_item_index": 0,
         "history": [],
+        "team_change_requests": [],
         "moderator_user_id": None,
     }
 
@@ -97,6 +104,8 @@ def sanitize_work_items(items):
             "id": item_id,
             "title": title,
             "description": description,
+            "elapsed_ms": 0,
+            "timer_started_at": None,
         })
 
     return cleaned or default_work_items()
