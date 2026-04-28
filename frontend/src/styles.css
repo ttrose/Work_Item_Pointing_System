@@ -79,11 +79,15 @@ h1, h2, h3 { margin: 0 0 10px; }
 
 .topbar {
   display: grid;
-  grid-template-columns: 1.35fr 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   align-items: end;
   padding: 18px;
   margin-bottom: 16px;
+}
+
+.topbar > .field {
+  grid-column: 1 / -1;
 }
 
 .field { margin-top: 12px; }
@@ -122,8 +126,9 @@ h1, h2, h3 { margin: 0 0 10px; }
 
 .identity {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
   gap: 12px;
+  min-width: 0;
 }
 
 .join-grid {
