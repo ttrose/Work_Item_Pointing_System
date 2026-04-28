@@ -279,7 +279,8 @@ def join_session(room_id, sid, data):
     room = rooms.setdefault(room_id, new_room())
 
     user_id = data["user_id"]
-    participant_type = data.get("participant_type", "player")
+    is_first_participant = not room["participants"]
+    participant_type = "observer" if is_first_participant else data.get("participant_type", "player")
     requested_team = data.get("team")
     team = "" if participant_type == "observer" else resolve_team_id(room, requested_team)
 

@@ -1,6 +1,63 @@
 <template>
   <main class="room">
     <section class="panel section">
+      <div class="queue-shell">
+        <div class="title-row">
+          <div>
+            <h3>Work Item Queue</h3>
+            <div class="muted">Everyone can follow the queue. Only the moderator can change it.</div>
+          </div>
+          <button v-if="permissions.can_edit_settings" class="btn ghost" @click="addWorkItem">Add Work Item</button>
+        </div>
+
+        <div class="queue-list">
+          <div
+            v-for="(item, idx) in draftWorkItems"
+            :key="item.id"
+            class="queue-row"
+            :class="{
+              active: idx === state.current_work_item_index,
+              editable: permissions.can_edit_settings,
+              dragging: dragWorkItemIndex === idx
+            }"
+            @click="permissions.can_edit_settings && setCurrentWorkItem(idx)"
+            :draggable="permissions.can_edit_settings"
+            @dragstart="startWorkItemDrag(idx)"
+            @dragover.prevent
+            @drop="dropWorkItem(idx)"
+            @dragend="endWorkItemDrag"
+          >
+            <span
+              v-if="permissions.can_edit_settings"
+              class="queue-grip"
+              aria-hidden="true"
+            >
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            <div class="queue-row-copy">
+              <strong>{{ idx + 1 }}. {{ item.title }}</strong>
+              <div v-if="item.description" class="small muted">{{ item.description }}</div>
+              <div class="small queue-time" :class="{ live: item.timer_started_at }">
+                Time spent: {{ formatDuration(getLiveElapsedMs(item)) }}
+              </div>
+            </div>
+            <button
+              v-if="permissions.can_edit_settings"
+              class="mini"
+              type="button"
+              :disabled="draftWorkItems.length === 1"
+              @click.stop="removeWorkItem(idx)"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel section">
       <div class="title-row">
         <div>
           <h2>{{ state.story_title || 'Current Work Item' }}</h2>
@@ -168,10 +225,15 @@
 
 <script setup>
 defineProps({
+  addWorkItem: { type: Function, required: true },
   canClaimModerator: { type: Boolean, required: true },
   castVote: { type: Function, required: true },
   claimModerator: { type: Function, required: true },
   consensusBadgeClass: { type: Function, required: true },
+  dragWorkItemIndex: { type: [Number, null], required: false, default: null },
+  draftWorkItems: { type: Array, required: true },
+  dropWorkItem: { type: Function, required: true },
+  endWorkItemDrag: { type: Function, required: true },
   formatDuration: { type: Function, required: true },
   formatStat: { type: Function, required: true },
   getLiveElapsedMs: { type: Function, required: true },
@@ -182,12 +244,15 @@ defineProps({
   navigateWorkItem: { type: Function, required: true },
   permissions: { type: Object, required: true },
   prettyParticipant: { type: Function, required: true },
+  removeWorkItem: { type: Function, required: true },
   resetVotes: { type: Function, required: true },
   revealVotes: { type: Function, required: true },
   respondTeamChangeRequest: { type: Function, required: true },
   saveStory: { type: Function, required: true },
   selectedVote: { type: [String, null], required: false, default: null },
   setModerator: { type: Function, required: true },
+  setCurrentWorkItem: { type: Function, required: true },
+  startWorkItemDrag: { type: Function, required: true },
   state: { type: Object, required: true },
   teamName: { type: Function, required: true },
 })

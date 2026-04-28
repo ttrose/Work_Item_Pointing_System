@@ -1,60 +1,5 @@
 <template>
   <aside class="panel sidebar">
-    <div class="queue-shell">
-      <div class="title-row">
-        <div>
-          <h3>Work Item Queue</h3>
-          <div class="muted">Everyone can follow the queue. Only the moderator can change it.</div>
-        </div>
-        <button v-if="permissions.can_edit_settings" class="btn ghost" @click="addWorkItem">Add Work Item</button>
-      </div>
-
-      <div class="queue-list">
-        <div
-          v-for="(item, idx) in draftWorkItems"
-          :key="item.id"
-          class="queue-row"
-          :class="{
-            active: idx === state.current_work_item_index,
-            editable: permissions.can_edit_settings,
-            dragging: dragWorkItemIndex === idx
-          }"
-          @click="permissions.can_edit_settings && selectWorkItem(idx)"
-          :draggable="permissions.can_edit_settings"
-          @dragstart="startWorkItemDrag(idx)"
-          @dragover.prevent
-          @drop="dropWorkItem(idx)"
-          @dragend="endWorkItemDrag"
-        >
-          <span
-            v-if="permissions.can_edit_settings"
-            class="queue-grip"
-            aria-hidden="true"
-          >
-            <span></span>
-            <span></span>
-            <span></span>
-          </span>
-          <div class="queue-row-copy">
-            <strong>{{ idx + 1 }}. {{ item.title }}</strong>
-            <div v-if="item.description" class="small muted">{{ item.description }}</div>
-            <div class="small queue-time" :class="{ live: item.timer_started_at }">
-              Time spent: {{ formatDuration(getLiveElapsedMs(item)) }}
-            </div>
-          </div>
-          <button
-            v-if="permissions.can_edit_settings"
-            class="mini"
-            type="button"
-            :disabled="draftWorkItems.length === 1"
-            @click.stop="removeWorkItem(idx)"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-    </div>
-
     <div class="tabs">
       <button v-if="permissions.can_edit_settings" class="tab" :class="{ active: activeTab === 'settings' }" @click="$emit('update:activeTab', 'settings')">
         Settings
@@ -166,28 +111,17 @@ defineProps({
   activeTab: { type: String, required: true },
   addPoint: { type: Function, required: true },
   addTeam: { type: Function, required: true },
-  addWorkItem: { type: Function, required: true },
   dragPointIndex: { type: [Number, null], required: false, default: null },
-  dragWorkItemIndex: { type: [Number, null], required: false, default: null },
   draftSettings: { type: Object, required: true },
-  draftWorkItems: { type: Array, required: true },
   dropPoint: { type: Function, required: true },
-  dropWorkItem: { type: Function, required: true },
   endPointDrag: { type: Function, required: true },
-  endWorkItemDrag: { type: Function, required: true },
-  formatDuration: { type: Function, required: true },
-  getLiveElapsedMs: { type: Function, required: true },
   isModerator: { type: Boolean, required: true },
   permissions: { type: Object, required: true },
   removePoint: { type: Function, required: true },
   removeTeam: { type: Function, required: true },
-  removeWorkItem: { type: Function, required: true },
   resetDefaults: { type: Function, required: true },
   saveSettings: { type: Function, required: true },
-  selectWorkItem: { type: Function, required: true },
   startPointDrag: { type: Function, required: true },
-  startWorkItemDrag: { type: Function, required: true },
-  state: { type: Object, required: true },
 })
 
 defineEmits(['update:activeTab'])
