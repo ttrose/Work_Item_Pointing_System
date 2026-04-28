@@ -1,20 +1,19 @@
-Notes Of Changes:
-If a user opens a window, and then closes it, we need to remove them from the session.
+Work item Queue
+Team Customization
+ADO Connection in some way shape or form.
+Add More Customizeable Settings
 
-Even better, if we can have them confirm they want to join. So when they pull up the join link it's something like
+Issues:
+Not Clear on What Apply Work Items is vs. Add Work Items
+You can add a team but after you add a team, you must go to settings and apply settings, should just have an Add Team button that will do that and will add a new box if the settings are set to such.
+Also if you add a team and clcikc Apply Work Items, then it deletes a team.
 
-http://localhost:5173/?room=CA2AE6/join
+If I add a team, and then someone tries to join they only see the first team, they do not see all applied teams.
 
-That then has the user Enter Name, Participation, and Team, and then click join, which directs them to the session.
+Also the next and previous should not be hidden, I should be able to move through all the work items as I see I want, I should not have to always wait.
 
-So yeah maybe we can make the top bar locked once joined for any user who is not a moderator. We 
+The bar on the right side could get so long, maybe it could just be a component on the left. So I add work items/teams on the right, then on the left there is a list box, so I as I add things on the right, they are listed on the left side. Then on that left side in the list, I should have the three vertical dots that allow me to re-order the list as I see fit. Then maybe for work items it highlights the current work items being voted on, and as we go it moves the selector up or down the list. Also can have the a remove icon if they want to remove the icon from the list.
 
-If anyone disconnects during the session it should remove that player.
+It also should not add a vote if one isn't made if I go next or previous, just if we skip a work item, don't show in the history as 'No Consensus' just ignore the skipped item. 
 
-Only the moderator should have access to edit the session name, or any details, currently as a player I can edit the session name. 
-
-Can we just hide the settings tab for anyone except the moderator?
-
-Also under moderator controls, I cannot hand-off any controls.
-
-Finally under point values there are buttons there to adjust/change the order. What about instead at the start of the line for the point values, just have a drag and drop reordering icon. like three vertical dots and can change the order.
+All users should be able to see the list of work items, however, only moderator can edit them.
