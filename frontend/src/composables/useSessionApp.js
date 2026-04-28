@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { io } from 'socket.io-client'
 
-import { API_BASE, SOCKET_URL } from '../config'
+import { API_BASE, HAS_PRODUCTION_LOCALHOST_BACKEND, SOCKET_URL } from '../config'
 
 const SESSION_STORAGE_ROOM_KEY = 'work_item_planning_session_joined_room'
 const THEME_STORAGE_KEY = 'work_item_planning_session_theme'
@@ -235,7 +235,7 @@ export function useSessionApp() {
       markRoomJoined()
       connectSocket()
     } catch (error) {
-      errorMessage.value = `Could not reach the backend at ${API_BASE}. Start the Flask server and try again.`
+      errorMessage.value = backendConnectionError('Could not reach the backend')
       console.error(error)
     }
   }
@@ -268,6 +268,14 @@ export function useSessionApp() {
     if (!joinPreviewInterval) return
     window.clearInterval(joinPreviewInterval)
     joinPreviewInterval = null
+  }
+
+  function backendConnectionError(prefix) {
+    if (HAS_PRODUCTION_LOCALHOST_BACKEND) {
+      return `${prefix}. Production is configured with a localhost backend URL. Set VITE_API_BASE and VITE_SOCKET_URL to the deployed Flask backend URL, then redeploy the frontend.`
+    }
+
+    return `${prefix} at ${API_BASE}. Start the Flask server and try again.`
   }
 
   function startClock() {
@@ -312,7 +320,7 @@ export function useSessionApp() {
     socket.value = io(SOCKET_URL)
 
     socket.value.on('connect_error', () => {
-      errorMessage.value = `Realtime connection failed. Make sure the backend is running at ${SOCKET_URL}.`
+      errorMessage.value = backendConnectionError('Realtime connection failed')
     })
 
     socket.value.on('connect', () => {
